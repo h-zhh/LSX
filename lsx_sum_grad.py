@@ -211,6 +211,20 @@ class LSXPipeline(keras.Model):
         return sum_non_target_grads
 
 
+class AlphaSchedulerCallback(tf.keras.callbacks.Callback):
+    def __init__(self, model, initial_alpha, new_alpha, change_epoch):
+        super().__init__()
+        self.model = model
+        self.initial_alpha = initial_alpha
+        self.new_alpha = new_alpha
+        self.change_epoch = change_epoch
+
+    def on_epoch_begin(self, epoch, logs=None):
+        if epoch == self.change_epoch:
+            print(f"Changing alpha from {self.initial_alpha} to {self.new_alpha}")
+            self.model.loss_weights = {"output_1": 1.0, "output_2": self.new_alpha}
+
+
 DATASETS = {
     "decoy-mnist": DecoyMNIST,
 }
@@ -277,6 +291,16 @@ def main():
     )
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument(
+        "-C",
+        "--change-alpha",
+        type=bool,
+        default=False,
+        help="Change alpha in the middle of training or not",
+    )
+    parser.add_argument("-EC", "--epoch-change", type=int, help="Epoch to change alpha")
+    parser.add_argument("-IA", "--initial-alpha", type=float, help="Initial alpha")
+    parser.add_argument("-NA", "--new-alpha", type=float, help="New alpha")
     args = parser.parse_args()
 
     wandb.init(project="LSX", entity="zhihanhu99")  # change entity to your own username
@@ -327,17 +351,33 @@ def main():
     combined_inputs = (dataset.X_tr, dataset.Z_tr)
     combined_validation = (dataset.X_ts, dataset.Z_ts)
 
-    pipeline.fit(
-        combined_inputs,
-        dataset.Y_tr,
-        epochs=args.max_epochs,
-        batch_size=args.batch_size,
-        verbose=args.verbose,
-        validation_data=(combined_validation, dataset.Y_ts),
-        callbacks=[
-            wandb_callback,
-        ],
-    )
+    if args.change_alpha:
+        alpha_scheduler = AlphaSchedulerCallback(
+            model=pipeline,
+            initial_alpha=args.initial_alpha,
+            new_alpha=args.new_alpha,
+            change_epoch=args.epoch_change,  # change to the desired epoch
+        )
+
+        pipeline.fit(
+            combined_inputs,
+            dataset.Y_tr,
+            epochs=args.max_epochs,
+            batch_size=args.batch_size,
+            verbose=args.verbose,
+            validation_data=(combined_validation, dataset.Y_ts),
+            callbacks=[wandb_callback, alpha_scheduler],
+        )
+    else:
+        pipeline.fit(
+            combined_inputs,
+            dataset.Y_tr,
+            epochs=args.max_epochs,
+            batch_size=args.batch_size,
+            verbose=args.verbose,
+            validation_data=(combined_validation, dataset.Y_ts),
+            callbacks=[wandb_callback],
+        )
 
     # pipeline.save(f"{basename}_model/", save_format="tf")
 
